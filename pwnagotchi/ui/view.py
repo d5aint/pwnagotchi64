@@ -54,6 +54,15 @@ class View(object):
         self._layout = impl.layout()
         self._width = self._layout['width']
         self._height = self._layout['height']
+
+        if 'mode_right_edge' in self._layout:
+            mode_x, mode_y = self._layout['mode_right_edge']
+            mode_widget = Text(value='AUTO', position=(0, mode_y), right_edge=mode_x,
+                                font=fonts.Bold, color=BLACK)
+        else:
+            mode_widget = Text(value='AUTO', position=self._layout['mode'],
+                                font=fonts.Bold, color=BLACK)
+
         self._state = State(state={
             'channel': LabeledValue(color=BLACK, label='CH', value='00', position=self._layout['channel'],
                                     label_font=fonts.Bold,
@@ -93,8 +102,7 @@ class View(object):
                                    position=(self._layout['shakes'][0], self._layout['shakes'][1]),
                                    font=fonts.Medium),
 
-            'mode': Text(value='AUTO', position=self._layout['mode'],
-                         font=fonts.Bold, color=BLACK),
+            'mode': mode_widget,
         })
 
         if state:
@@ -156,7 +164,13 @@ class View(object):
         # jittering as the cursor blinks: the name's own draw call is now
         # identical between blink states no matter where the cursor sits.
         name_elem = self._state._state.get('name')
-        if self._width == 122 and name_elem is not None:
+        # Was "self._width == 122" -- true for both portrait panels today
+        # (waveshare3portrait/waveshare4portrait are both exactly 122 wide),
+        # but a hardcoded exact-width check would silently stop matching
+        # the moment either one's canvas ever changes size. Comparing width
+        # to height instead is resolution-independent and still portrait-
+        # specific, so it keeps working regardless.
+        if self._width < self._height and name_elem is not None:
             try:
                 # measure the *actual* font currently on the element, not an
                 # assumed pixel-per-char constant -- portrait-mode.py swaps
@@ -330,11 +344,6 @@ class View(object):
     def on_lost_peer(self, peer):
         self.set('face', faces.LONELY)
         self.set('status', self._voice.on_lost_peer(peer))
-        self.update()
-
-    def on_free_channel(self, channel):
-        self.set('face', faces.SMART)
-        self.set('status', self._voice.on_free_channel(channel))
         self.update()
 
     def on_reading_logs(self, lines_so_far=0):

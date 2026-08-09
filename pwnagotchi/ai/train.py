@@ -54,12 +54,14 @@ class Stats(object):
         with self._lock:
             if os.path.exists(self.path) and os.path.getsize(self.path) > 0:
                 logging.info("[ai] loading %s" % self.path)
-                with open(self.path, 'rt') as fp:
-                    obj = json.load(fp)
-
-                self.born_at = obj['born_at']
-                self.epochs_lived, self.epochs_trained = obj['epochs_lived'], obj['epochs_trained']
-                self.best_reward, self.worst_reward = obj['rewards']['best'], obj['rewards']['worst']
+                try:
+                    with open(self.path, 'rt') as fp:
+                        obj = json.load(fp)
+                    self.born_at = obj['born_at']
+                    self.epochs_lived, self.epochs_trained = obj['epochs_lived'], obj['epochs_trained']
+                    self.best_reward, self.worst_reward = obj['rewards']['best'], obj['rewards']['worst']
+                except (json.JSONDecodeError, KeyError) as e:
+                    logging.warning("[ai] %s is corrupt (%s) -- starting stats fresh" % (self.path, e))
 
     def save(self):
         with self._lock:
@@ -145,8 +147,10 @@ class AsyncTrainer(object):
         self._training_epochs = for_epochs
 
         if training:
+            self._view.set('mode', 'TRAIN')
             plugins.on('ai_training_start', self, for_epochs)
         else:
+            self._view.set('mode', '  AI')
             plugins.on('ai_training_end', self)
 
     def is_training(self):
@@ -272,7 +276,7 @@ class AsyncTrainer(object):
             new_params['channels'] = self._cap_channels(new_params['channels'])
 
         plugins.on('ai_policy', self, new_params)
-        logging.info("[ai] setting new policy:")
+        logging.info("[ai] setting new policy (%s):" % ("training" if self._is_training else "knowledge"))
         for name, value in new_params.items():
             if name in self._config['personality']:
                 curr_value = self._config['personality'][name]
@@ -347,20 +351,6 @@ class AsyncTrainer(object):
                 was_paused = False
                 self._render_env_safe()
 
-                # this whole block -- including plain predict()/step(), not just
-                # learn() -- ends up calling on_ai_policy(), which pushes settings
-                # to bettercap over its API. A transient bettercap hiccup there
-                # used to raise straight out of this method uncaught; since this
-                # runs on a bare _thread (not threading.Thread), an uncaught
-                # exception here silently kills the whole AI worker for the rest
-                # of the process's life -- no crash log, no restart, nothing (the
-                # traceback goes to stderr, which the systemd unit discards) --
-                # the AI just permanently stops updating its policy until next
-                # boot. Confirmed on-device: a policy set right after boot, then
-                # nothing for the next ~24 epochs/38 minutes, until the next
-                # restart. predict()/step() run unguarded on every epoch before
-                # MIN_EPOCHS_BEFORE_TRAINING is reached (learn() never even gets
-                # called yet), so this window is hit on every single boot.
                 try:
                     if self._epoch.epoch >= self.MIN_EPOCHS_BEFORE_TRAINING and random.random() > self._config['ai']['laziness']:
                         logging.info("[ai] learning for %d epochs ..." % epochs_per_episode)
@@ -374,7 +364,10 @@ class AsyncTrainer(object):
                     elif obs is None:
                         obs = self._model.env.reset()
 
-                    action, _ = self._model.predict(obs)
+                    if self._ai_paused.is_set():
+                        continue
+
+                    action, _ = self._model.predict(obs, deterministic=True)
                     obs, _, _, _ = self._model.env.step(action)
                 except Exception as e:
                     logging.exception("[ai] error during AI step (%s)", e)

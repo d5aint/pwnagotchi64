@@ -11,7 +11,9 @@ main.mon_stop_cmd = "/usr/bin/monstop"
 main.mon_max_blind_epochs = 5
 main.no_restart = false
 main.whitelist = ['home-wifi-name', 'example2',]
+main.home_networks = []
 main.filter = ""
+main.hardware_led = true
 
 [main.log]
 debug = false
@@ -43,6 +45,9 @@ enabled = true
 [main.plugins.hashvault]
 enabled = true
 
+[main.plugins.whitelist]
+enabled = true
+
 [main.plugins.dev-ai-trained]
 enabled = true
 
@@ -66,10 +71,13 @@ enabled = true
 scale = "celsius"
 orientation = "horizontal"
 
+[main.plugins.tweak_view]
+enabled = true
+
 [ai]
 enabled = true
 path = "/root/brain.nn"
-laziness = 0.2
+laziness = 0.8
 epochs_per_episode = 10
 
 [ai.params]
@@ -87,7 +95,7 @@ advertise = false
 deauth = true
 associate = true
 channels = []
-min_rssi = -75
+min_rssi = -95
 ap_ttl = 240
 sta_ttl = 300
 recon_time = 150
@@ -155,7 +163,7 @@ on_frame = ""
 
 [ui.display]
 enabled = true
-rotation = 180
+rotation = 0
 type = "waveshare_4"
 color = "black"
 full_refresh_every = 300

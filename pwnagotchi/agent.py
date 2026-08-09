@@ -47,7 +47,8 @@ class Agent(Client, Automata, AsyncAdvertiser, AsyncTrainer):
                         config['bettercap']['port'],
                         config['bettercap']['username'],
                         config['bettercap']['password'])
-        Automata.__init__(self, config, view)
+        self._supported_channels = utils.iface_channels(config['main']['iface'])
+        Automata.__init__(self, config, view, self._supported_channels)
         AsyncAdvertiser.__init__(self, config, view, keypair)
         AsyncTrainer.__init__(self, config)
 
@@ -56,7 +57,6 @@ class Agent(Client, Automata, AsyncAdvertiser, AsyncTrainer):
         self._current_channel = 0
         self._tot_aps = 0
         self._aps_on_channel = 0
-        self._supported_channels = utils.iface_channels(config['main']['iface'])
         self._view = view
         self._view.set_agent(self)
         self._web_ui = Server(self, config['ui'])
@@ -328,7 +328,7 @@ class Agent(Client, Automata, AsyncAdvertiser, AsyncTrainer):
                self._filter.match(ap['hostname']) is not None or \
                self._filter.match(ap['mac']) is not None
 
-    def set_access_points(self, aps):
+    def set_access_points(self, aps, unfiltered_count=0):
         self._access_points = aps
 
         # --- INTERACTION HISTORY DECAY: NEW ---
@@ -343,42 +343,39 @@ class Agent(Client, Automata, AsyncAdvertiser, AsyncTrainer):
         # ---------------------------------------
 
         plugins.on('wifi_update', self, aps)
-        self._epoch.observe(aps, list(self._peers.values()))
+        self._epoch.observe(aps, list(self._peers.values()), unfiltered_count)
         return self._access_points
 
     def get_access_points(self):
         whitelist = self._config['main']['whitelist']
+        home_networks = self._config['main'].get('home_networks', [])
         aps = []
+        unfiltered_count = 0
         try:
             s = self.session()
             plugins.on("unfiltered_ap_list", self, s['wifi']['aps'])
-            # checked against the unfiltered list, so this still catches whitelisted
-            # APs even though they never make it into the aps list below
-            self._whitelist_ap_visible = bool(whitelist) and any(
-                ap['hostname'] in whitelist or ap['mac'].lower() in whitelist or ap['mac'][:8].lower() in whitelist
+            unfiltered_count = len(s['wifi']['aps'])
+            self._whitelist_ap_visible = bool(home_networks) and any(
+                ap['hostname'] in home_networks or ap['mac'].lower() in home_networks
+                or ap['mac'][:8].lower() in home_networks
                 for ap in s['wifi']['aps']
             )
             for ap in s['wifi']['aps']:
                 if ap['encryption'] == '' or ap['encryption'] == 'OPEN':
                     continue
-                elif ap['hostname'] not in whitelist \
-                        and ap['mac'].lower() not in whitelist \
-                        and ap['mac'][:8].lower() not in whitelist:
+                elif ap['hostname'] not in whitelist and ap['hostname'] not in home_networks \
+                        and ap['mac'].lower() not in whitelist and ap['mac'].lower() not in home_networks \
+                        and ap['mac'][:8].lower() not in whitelist and ap['mac'][:8].lower() not in home_networks:
                     if self._filter_included(ap):
                         aps.append(ap)
         except Exception as e:
-            # session() has no retry/backoff of its own (unlike run()), so
-            # this fires every single epoch bettercap is deliberately
-            # stopped for during an update -- same EXPECTED_DOWNTIME flag
-            # bettercap.py's own retry loops check, so this doesn't dump a
-            # full traceback for something that isn't actually a problem
             if bettercap.EXPECTED_DOWNTIME:
                 logging.debug("error while getting access points (expected -- update in progress): %s", e)
             else:
                 logging.exception("Error while getting acces points (%s)", e)
 
         aps.sort(key=lambda ap: ap['channel'])
-        return self.set_access_points(aps)
+        return self.set_access_points(aps, unfiltered_count)
 
     def is_whitelisted_ap_visible(self):
         return self._whitelist_ap_visible

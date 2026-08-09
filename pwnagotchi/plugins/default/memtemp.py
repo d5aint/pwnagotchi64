@@ -1,5 +1,10 @@
 from pwnagotchi.ui.components import LabeledValue, Text
-from pwnagotchi.ui.view import BLACK
+import pwnagotchi.ui.view as view
+# NOT "from pwnagotchi.ui.view import BLACK" -- that grabs a static
+# snapshot of BLACK at plugin-import time, before View.__init__'s
+# ui.display.color-based inversion has run, so it never reflects the
+# swap. view.BLACK is looked up fresh every time it's actually used
+# below, by which point the inversion has happened.
 import pwnagotchi.ui.fonts as fonts
 import pwnagotchi.plugins as plugins
 import pwnagotchi
@@ -9,7 +14,7 @@ import time
 
 class MemTemp(plugins.Plugin):
     __author__ = 'https://github.com/xenDE'
-    __version__ = '1.0.2'
+    __version__ = '1.0.3'
     __license__ = 'GPL3'
     __description__ = 'A plugin that will display memory/cpu usage and temperature'
 
@@ -33,7 +38,7 @@ class MemTemp(plugins.Plugin):
         return f"{int(pwnagotchi.mem_usage() * 100)}%"
 
     def cpu_load(self):
-        return f"{int(pwnagotchi.cpu_load() * 100)}%"
+        return f"{int(pwnagotchi.process_cpu_load() * 100)}%"
 
     def cpu_temp(self):
         if self.options['scale'] == "fahrenheit":
@@ -109,7 +114,7 @@ class MemTemp(plugins.Plugin):
                 ui.add_element(
                     f"memtemp_{field}",
                     LabeledValue(
-                        color=BLACK,
+                        color=view.BLACK,
                         label=f"{self.pad_text(field)}:",
                         value="-",
                         position=(v_pos_x, v_pos_y + (idx * line_spacing)),
@@ -125,7 +130,7 @@ class MemTemp(plugins.Plugin):
             ui.add_element(
                 'memtemp_header',
                 Text(
-                    color=BLACK,
+                    color=view.BLACK,
                     value=" ".join([self.pad_text(x) for x in self.fields]),
                     position=(h_pos_x, h_pos_y),
                     font=fonts.Small,
@@ -134,7 +139,7 @@ class MemTemp(plugins.Plugin):
             ui.add_element(
                 'memtemp_data',
                 Text(
-                    color=BLACK,
+                    color=view.BLACK,
                     value=" ".join([self.pad_text("-") for x in self.fields]),
                     position=(h_pos_x, h_pos_y + line_spacing),
                     font=fonts.Small,

@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import urllib.request
 import warnings
 
@@ -39,12 +40,20 @@ log = logging.getLogger(__name__)
 # wifi.recon.channel clear handler which already guards this -- crashed
 # on every single call made before the wifi module had fully started,
 # confirmed live to wedge the whole recon cycle indefinitely.
-BETTERCAP_PATCH_VERSION = "v2.41.5-pwnagotchi4"
+BETTERCAP_PATCH_VERSION = "v2.41.5-pwnagotchi5"
 BETTERCAP_PATCH_URL = (
     "https://github.com/ex18a/bettercap/releases/download/"
-    f"{BETTERCAP_PATCH_VERSION}/bettercap-arm64-pwnagotchi4"
+    f"{BETTERCAP_PATCH_VERSION}/bettercap-arm64-pwnagotchi5"
 )
-BETTERCAP_PATCH_SHA256 = "8eca6f2ef9127f6a84240b9566fe89a1da912f0c0c3008aca9b8f9d418a45838"
+# pwnagotchi5: channel hopping now sets frequency via a direct nl80211
+# netlink call instead of forking a new `iw` process on every single hop
+# -- avoids process-spawn overhead (confirmed a real, measured cost on
+# pwndroid's Mi Mix 3 port, see that project's notes/02-monitor-mode.md)
+# on every channel switch, not just the occasional one. Falls back to the
+# old iw/iwconfig path on any netlink failure, so this can't behave worse
+# than pwnagotchi4 on hardware/kernels where it doesn't apply cleanly,
+# only better where it does.
+BETTERCAP_PATCH_SHA256 = "72ab2fe2795f9a743b3c36b7298ce16e3a7f53b6f8d14aad512bed384edb4890"
 
 def install_file(source_filename, dest_filename):
     # do not overwrite network configuration if it exists already
@@ -144,84 +153,56 @@ def install_system_files():
             install_file(source_filename, dest_filename)
 
 def restart_services():
-    # Check if we are running inside a Docker container or chroot environment
-    # where systemd is not actively running as the init system.
     if os.path.exists('/.dockerenv') or not os.path.isdir('/run/systemd/system'):
         log.info("Running in a chroot/Docker build environment. Skipping systemctl commands.")
         return
 
-    # Only reload systemd units if the OS is actually booted with systemd
     log.info("Reloading systemd daemon...")
     os.system("systemctl daemon-reload")
     os.system("systemctl enable fstrim.timer")
-    # --now: an existing device picking this up via an in-place update should
-    # start getting covered right away, not just on its next reboot
     os.system("systemctl enable --now pwnagotchi-syswatchdog.timer")
 
-    # krnbt=on (boot/config.txt) makes the kernel attach the BT UART chip
-    # directly at boot; hciuart.service (userspace btuart/hciattach) does the
-    # same job the traditional way and ships enabled by default on the base
-    # image. Left enabled alongside krnbt, both fight over the same UART
-    # connection to the combo WiFi+BT chip -- suspected contributor to
-    # nexmon/mon0 instability whenever bluetooth is actually in use.
-    # Fresh images no longer enable it (see builder/pwnagotchi.sh); this
-    # covers already-provisioned devices picking it up via an in-place update.
     os.system("systemctl disable --now hciuart.service 2>/dev/null")
 
-    # Hardware watchdog (bcm2835_wdt, /dev/watchdog) -- recovers from full
-    # kernel lockups (confirmed on-device: a nexmon/SDIO-level lockup can
-    # freeze the entire kernel, not just wifi, which no userspace watchdog
-    # can do anything about) by forcing a real hardware reset if systemd's
-    # own event loop stops petting it for 30s. Fresh images enable this at
-    # build time (see builder/pwnagotchi.sh); this covers already-
-    # provisioned devices picking it up via an in-place update. daemon-
-    # reexec (not just daemon-reload) is required for PID 1 to actually
-    # re-read system.conf and arm the watchdog live, without a reboot.
-    with open('/etc/systemd/system.conf') as f:
-        system_conf = f.read()
-    new_system_conf = system_conf \
-        .replace('#RuntimeWatchdogSec=off', 'RuntimeWatchdogSec=30s') \
-        .replace('#RebootWatchdogSec=10min', 'RebootWatchdogSec=30s')
-    if new_system_conf != system_conf:
-        with open('/etc/systemd/system.conf', 'w') as f:
-            f.write(new_system_conf)
-        os.system("systemctl daemon-reexec")
-
-    # opt-in only: pwnagotchi-soaktest deliberately reboots a healthy device
-    # every hour, which is only ever wanted for overnight soak-testing on a
-    # specific device -- never as default behavior for every user. Enabled
-    # only if /root/.soaktest exists, disabled (not just left alone)
-    # otherwise so removing that flag file actually turns it back off.
     if os.path.exists('/root/.soaktest'):
         os.system("systemctl enable --now pwnagotchi-soaktest.timer")
     else:
         os.system("systemctl disable --now pwnagotchi-soaktest.timer")
 
-    # opt-in only, same pattern as soaktest above: this is a diagnostic tool
-    # for one specific investigation (a suspect battery percentage curve),
-    # not something that should log every user's battery every 30s forever.
-    # Enabled only if /root/.battery-curve-test exists, disabled (not just
-    # left alone) otherwise so removing that flag file actually turns it
-    # back off.
     if os.path.exists('/root/.battery-curve-test'):
         os.system("systemctl enable --now pwnagotchi-battery-curve-log.timer")
     else:
         os.system("systemctl disable --now pwnagotchi-battery-curve-log.timer")
 
+    with open('/etc/systemd/system.conf') as f:
+        system_conf = f.read()
+    new_system_conf = system_conf \
+        .replace('#RuntimeWatchdogSec=off', 'RuntimeWatchdogSec=60s') \
+        .replace('#RebootWatchdogSec=10min', 'RebootWatchdogSec=60s')
+    if new_system_conf != system_conf:
+        with open('/etc/systemd/system.conf', 'w') as f:
+            f.write(new_system_conf)
+        os.system("systemctl daemon-reexec")
+
 def install_bt_wizard():
-    # Only ever installed at full image-build time (builder/pwnagotchi.sh
-    # copies it to /usr/local/bin/bt-wizard), not through this in-place
-    # pip-install path -- meaning any already-provisioned device picking up
-    # a bt-wizard fix via auto-update would otherwise keep silently running
-    # whatever stale copy was baked into its original image forever. Same
-    # "already-provisioned devices picking this up via an in-place update"
-    # gap as remove_stale_eth0_interfaces_file() below, just for this file.
     setup_path = os.path.dirname(__file__)
     src = os.path.join(setup_path, 'builder', 'assets', 'bluetooth', 'bt-wizard')
     dest = '/usr/local/bin/bt-wizard'
     if os.path.exists(src):
         shutil.copyfile(src, dest)
         os.chmod(dest, 0o755)
+
+def regenerate_motd():
+    setup_path = os.path.dirname(__file__)
+    src = os.path.join(setup_path, 'builder', 'assets', 'system', 'motd-gen.sh')
+    if not os.path.exists(src):
+        return
+    try:
+        with open('/etc/hostname') as f:
+            hostname = f.read().strip()
+    except OSError:
+        hostname = os.uname().nodename
+    subprocess.run(['bash', src, hostname])
 
 def remove_stale_eth0_interfaces_file():
     # base Kali image leftover, not ours -- duplicates our own eth0-cfg
@@ -279,25 +260,33 @@ with open('requirements.txt') as fp:
 VERSION_FILE = 'pwnagotchi/_version.py'
 pwnagotchi_version = version(VERSION_FILE)
 
-setup(name='pwnagotchi64',
-      version=pwnagotchi_version,
-      description='(⌐■_■) - Deep Reinforcement Learning instrumenting bettercap for WiFI pwning (64-bit Port).',
-      author='evilsocket && the dev team',
-      author_email='evilsocket@gmail.com',
-      maintainer='ex18a',
-      maintainer_email='your.email@example.com',
-      url='https://github.com/yourusername/pwnagotchi64',
-      license='GPL-3.0-or-later',
-      install_requires=required,
-      cmdclass={
-          "install": CustomInstall,
-      },
-      scripts=['bin/pwnagotchi'],
-      package_data={'pwnagotchi': ['defaults.yml', 'pwnagotchi/defaults.yml', 'locale/*/LC_MESSAGES/*.mo']},
-      include_package_data=True,
-      packages=find_packages(),
-      classifiers=[
-          'Programming Language :: Python :: 3',
-          'Development Status :: 5 - Production/Stable',
-          'Environment :: Console',
-      ])
+# Guarded so this file can be imported (e.g. by automatic-updates.py, to
+# call install_patched_bettercap() directly -- see that plugin's comment
+# on why it can't just rely on `pip install .` triggering CustomInstall)
+# without actually re-running the whole setuptools command dispatch.
+# PEP 517 build backends (setuptools.build_meta) still set __name__ ==
+# "__main__" when executing this file for a real build, so this doesn't
+# change anything about how `pip install .` itself behaves.
+if __name__ == "__main__":
+    setup(name='pwnagotchi64',
+          version=pwnagotchi_version,
+          description='(⌐■_■) - Deep Reinforcement Learning instrumenting bettercap for WiFI pwning (64-bit Port).',
+          author='evilsocket && the dev team',
+          author_email='evilsocket@gmail.com',
+          maintainer='ex18a',
+          maintainer_email='your.email@example.com',
+          url='https://github.com/yourusername/pwnagotchi64',
+          license='GPL-3.0-or-later',
+          install_requires=required,
+          cmdclass={
+              "install": CustomInstall,
+          },
+          scripts=['bin/pwnagotchi'],
+          package_data={'pwnagotchi': ['defaults.yml', 'pwnagotchi/defaults.yml', 'locale/*/LC_MESSAGES/*.mo']},
+          include_package_data=True,
+          packages=find_packages(),
+          classifiers=[
+              'Programming Language :: Python :: 3',
+              'Development Status :: 5 - Production/Stable',
+              'Environment :: Console',
+          ])
