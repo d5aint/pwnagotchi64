@@ -26,14 +26,20 @@ class WaveshareV4(DisplayImpl):
         self._layout['face'] = (0, 40)
         self._layout['name'] = (5, 20)
         self._layout['channel'] = (0, 0)
-        self._layout['aps'] = (28, 0)
+        self._layout['aps'] = (38, 0)
         self._layout['uptime'] = (185, 0)
+        self._layout['battery_right_edge'] = 175
         self._layout['line1'] = [0, 14, 250, 14]
         self._layout['line2'] = [0, 108, 250, 108]
-        self._layout['friend_face'] = (0, 92)
-        self._layout['friend_name'] = (40, 94)
+        self._layout['friend_face'] = (0, 80)
+        self._layout['friend_name'] = (40, 82)
         self._layout['shakes'] = (0, 109)
         self._layout['mode_right_edge'] = (249, 109)
+        self._layout.pop('mode', None)
+        self._layout['ip1'] = (0, 96)
+        self._layout['lifetime_trained'] = (125, 96)
+        self._layout['memtemp_header'] = (155, 76)
+        self._layout['memtemp_data'] = (155, 86)
         self._layout['status'] = {
             'pos': (125, 20),
             'font': fonts.status_font(fonts.Medium),

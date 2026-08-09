@@ -28,23 +28,30 @@ class WaveshareV3Portrait(DisplayImpl):
         fonts.setup(10, 8, 10, 35, 25, 9)
         self._layout['width'] = 122
         self._layout['height'] = 250
-        self._layout['face'] = (0, 90)
-        self._layout['name'] = (4, 25)   # aligned with status's x so the two columns line up
-        self._layout['channel'] = (0, 207)
-        self._layout['aps'] = (40, 207)
-        self._layout['uptime'] = (0, 3)
-        self._layout['line1'] = [0, 17, 125, 17]
-        self._layout['line2'] = [0, 221, 125, 221]
-        self._layout['friend_face'] = (85, 128)
-        self._layout['friend_name'] = (4, 130)
-        self._layout['shakes'] = (0, 223)
-        self._layout['last_pwnd_name'] = (0, 233)
-        self._layout['mode'] = (93, 223)
+        self._layout['face'] = (0, 87)
+        self._layout['face_width'] = 122
+        self._layout['name'] = (4, 22)   # aligned with status's x so the two columns line up
+        self._layout['channel'] = (0, 210)
+        self._layout['aps'] = (40, 210)
+        self._layout['uptime'] = (0, 0)
+        self._layout['line1'] = [0, 14, 125, 14]
+        self._layout['line2'] = [0, 224, 125, 224]
+        self._layout['friend_face'] = (85, 131)
+        self._layout['friend_name'] = (4, 133)
+        self._layout['shakes'] = (0, 226)
+        self._layout['last_pwnd_name'] = (0, 236)
+        self._layout['mode_right_edge'] = (121, 226)
+        self._layout.pop('mode', None)
+        self._layout['ip1'] = (0, 188)
+        self._layout['lifetime_trained'] = (0, 199)
+        self._layout['memtemp_header'] = (16, 160)
+        self._layout['memtemp_data'] = (16, 170)
         self._layout['status'] = {
-            'pos': (4, 45),
+            'pos': (4, 42),
             'font': fonts.status_font(fonts.Medium),
             'max': 20,
-            'lines': 3   # face starts at y=90, only ~45px below status -- cap so long text can't grow into it
+            'lines': 3,   # face starts at y=87, only ~45px below status -- cap so long text can't grow into it
+            'width': 114
         }
         return self._layout
 
